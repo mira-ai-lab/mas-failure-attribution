@@ -128,7 +128,7 @@ def main(args):
     if rollout_only:
         return
     # ROUND i >= 1: divide eval results of round 0 into success / fail
-    # sucess -> attack pipeline
+    # success -> attack pipeline
     # fail -> diagnose pipeline
     # current implementation is for testing replay function
     completed_tasks = []
