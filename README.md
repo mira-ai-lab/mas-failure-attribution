@@ -1,5 +1,9 @@
 # mas-failure-attribution
 
+For the current OWL handoff, start from `README_HANDOFF_ZH_EN.md`.
+
+当前 OWL 交接请优先阅读 `README_HANDOFF_ZH_EN.md`。
+
 A research-oriented framework to **build multi-agent system (MAS) failure datasets** and run **round-based attack / diagnosis workflows** for **failure attribution**. The core loop executes coding tasks, evaluates correctness in a **sandbox**, optionally designs **stealthy fault injections** (attack) or **root-cause fixes** (diagnosis), and **replays** execution from **recovery snapshots** to align attribution labels.
 
 The design is **backend-agnostic**: you plug in a MAS by implementing `BaseAdapter` under `adapter/<BackendName>/` and selecting it with `--backend`.

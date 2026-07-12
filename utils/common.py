@@ -45,8 +45,86 @@ def match_info(attack_info: list, diagnose_info: list):
     diagnose_info = [(info['step_id'], info['fault_code']) for info in diagnose_info]
     return attack_info == diagnose_info
 
+
+def _truncate_middle(text: str, limit: int) -> str:
+    """Keep the beginning and end of long trace text within a hard character cap."""
+    if len(text) <= limit:
+        return text
+    head = max(limit // 2, 0)
+    tail = max(limit - head, 0)
+    return (
+        text[:head]
+        + f"\n...[truncated {len(text) - limit} chars for attribution prompt size]...\n"
+        + text[-tail:]
+    )
+
+
+def compact_history_for_prompt(
+    history: list[dict],
+    max_step_chars: int = 1800,
+    max_total_chars: int = 50000,
+) -> str:
+    """Serialize execution history for attribution prompts without dropping step ids."""
+    compacted = []
+    for item in history:
+        if isinstance(item, dict):
+            new_item = dict(item)
+            content = "" if new_item.get("content") is None else str(new_item.get("content"))
+            new_item["content"] = _truncate_middle(content, max_step_chars)
+            compacted.append(new_item)
+        else:
+            compacted.append(_truncate_middle(str(item), max_step_chars))
+
+    rendered = json.dumps(compacted, ensure_ascii=False, indent=2, default=to_jsonable_python)
+    if len(rendered) <= max_total_chars:
+        return rendered
+
+    per_step_limit = max(400, max_total_chars // max(len(compacted), 1))
+    smaller = []
+    for item in history:
+        if isinstance(item, dict):
+            new_item = dict(item)
+            content = "" if new_item.get("content") is None else str(new_item.get("content"))
+            new_item["content"] = _truncate_middle(content, per_step_limit)
+            smaller.append(new_item)
+        else:
+            smaller.append(_truncate_middle(str(item), per_step_limit))
+    rendered = json.dumps(smaller, ensure_ascii=False, indent=2, default=to_jsonable_python)
+    return _truncate_middle(rendered, max_total_chars)
+
+
+def validate_attribution_info(log: dict, info: list[dict]):
+    """Validate that attribution steps point to real history entries."""
+    history_len = len(log.get('history', []))
+    task_id = log.get('question_ID', '<unknown>')
+    for idx, item in enumerate(info):
+        step = item.get('step_id')
+        if not isinstance(step, int) or step < 1 or step > history_len:
+            raise ValueError(
+                f"Invalid step_id for task {task_id}: info[{idx}].step_id={step} "
+                f"but history has {history_len} steps"
+            )
+        related_error = item.get('related_error')
+        if not isinstance(related_error, list):
+            raise ValueError(
+                f"Invalid related_error for task {task_id}: "
+                f"info[{idx}].related_error must be a list"
+            )
+        for related_step in related_error:
+            if (
+                not isinstance(related_step, int)
+                or related_step < 1
+                or related_step > history_len
+            ):
+                raise ValueError(
+                    f"Invalid related_error for task {task_id}: "
+                    f"info[{idx}].related_error contains {related_step} "
+                    f"but history has {history_len} steps"
+                )
+
 def save_final_result(path: Path, log: dict, info: list):
     """Assemble and persist final attribution result for one task."""
+    validate_attribution_info(log, info)
     id = log['question_ID']
     log['mistake_information'] = info
     log['attribution_subgraph'] = {

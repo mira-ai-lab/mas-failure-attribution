@@ -9,7 +9,11 @@ import shutil
 from typing import Type
 
 from adapter.base_adapter import BaseAdapter
-from utils.common import read_json_file, write_json_file
+from utils.common import (
+    read_json_file,
+    validate_attribution_info,
+    write_json_file,
+)
 from utils.fault_library import fault_candidates_for_prompt
 from utils.prompts import ATTACK_ANALYSIS_PROMPT
 from utils.logging import logger
@@ -38,6 +42,39 @@ async def attack_analysis(
     Returns:
         ``True`` when a valid attack analysis is generated, otherwise ``False``.
     """
+    task_id = task["question_ID"]
+    logger.info(f'Attack Analysis start for Task ID: {task_id}')
+    if len(injection_history) > 0:
+        min_step_id = injection_history[-1]['step_id']
+    else:
+        min_step_id = 0
+    allowed_step_ids = [
+        item.get('step')
+        for item in task.get('history', [])
+        if isinstance(item, dict) and isinstance(item.get('step'), int)
+    ]
+    idea = ATTACK_ANALYSIS_PROMPT.format(
+        task_id=task["question_ID"],
+        question=task["question"],
+        ground_truth=task["ground_truth"],
+        model_prediction=task["model_prediction"],
+        fault_pool_json=fault_candidates_for_prompt(),
+        topology_info=task['topology'],
+        history_str=task['history'],
+        injection_history=injection_history,
+        min_step_id=min_step_id,
+        allowed_step_ids=allowed_step_ids,
+    )
+    log = output / 'attack_analysis.json'
+    if log.exists():
+        if skipping_exists:
+            logger.info(f'Log for task {task_id} exists, skipping this round...')
+            try:
+                validate_attribution_info(task, read_json_file(log))
+            except ValueError as e:
+                logger.error(f'Existing attack analysis invalid for task {task_id}: {e}')
+                return False
+            return True
     async with semaphore:
         task_id = task["question_ID"]
         logger.info(f'Attack Analysis start for Task ID: {task_id}')
@@ -111,10 +148,17 @@ async def attack_analysis(
         if attacked_step <= min_step_id or attacked_step > len(task['history']):
             return False
 
-        write_json_file(
-            log,
-            injection_history + [attack_suggestion]
-        )
+    attack_history = injection_history + [attack_suggestion]
+    try:
+        validate_attribution_info(task, attack_history)
+    except ValueError as e:
+        logger.error(f'Attack analysis invalid for task {task_id}: {e}')
+        return False
+
+    write_json_file(
+        log,
+        attack_history
+    )
     return True
 
 def get_attack_analysis(
