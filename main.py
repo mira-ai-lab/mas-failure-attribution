@@ -10,9 +10,11 @@ This module orchestrates:
 
 # Standard library imports.
 import argparse
+import asyncio
 import importlib
 import shutil
 from pathlib import Path
+from asyncio import Semaphore
 from typing import Type
 
 # Third-party library imports.
@@ -38,7 +40,7 @@ from utils.logging import handler
 from utils.logging import logger
 from adapter.MagenticOne.magentic_runtime import _load_config_from_ini
 from utils.prompts import REPLAY_PROMPT
-
+from tqdm.asyncio import tqdm
 def _load_backend(name: str) -> Type[BaseAdapter]:
     """Load a backend adapter class by backend name.
 
@@ -52,7 +54,7 @@ def _load_backend(name: str) -> Type[BaseAdapter]:
     return getattr(backend, f'{name}Adapter')
 
 
-def main(args):
+async def main(args):
     """Run the full multi-round attribution pipeline.
 
     The function performs round-0 execution, evaluates outcomes, and then
@@ -78,7 +80,7 @@ def main(args):
     ]
     Backend = _load_backend(args.backend)
     backend = Backend()
-
+    semaphore = Semaphore(20)
     data_source = (tasks[0].get("data_source") or "").strip() if tasks else ""
     if not data_source:
         data_source = Path(str(args.dataset)).stem
@@ -94,7 +96,7 @@ def main(args):
         workspace_root = workspace_root.absolute()
     if not output_root.is_absolute():
         output_root = output_root.absolute()
-
+    coros = []
     # ROUND 0: run without injecting / diagnosing
     for task in tasks:
         task_id = task["task_id"].replace("/", "_")
@@ -107,14 +109,16 @@ def main(args):
         recovery_path = output / 'recovery'
         monitor = BaseMonitor(recovery_path, workspace, backend)
         
-        run_coding_task(
+        coros.append(run_coding_task(
             task,
             workspace,
             output,
             backend,
             skip_existing=skip_existing,
-            monitor=monitor
-        )
+            monitor=monitor,
+            semaphore=semaphore
+        ))
+    await tqdm.gather(*coros)
 
     # Start to eval round 0
     eval_path = output_root / data_source / "round_0"
@@ -133,98 +137,105 @@ def main(args):
     # current implementation is for testing replay function
     completed_tasks = []
     for current in range(1, max_rounds + 1):
-        for task in tasks:        
-            task_id = task["task_id"].replace("/", "_")
-            if task_id in completed_tasks:
-                continue
-            
-            logger.info(f'Round {current}: Start to process Task {task_id}')
-            last_round_output = output_root / data_source / f"round_{current-1}" / task_id
-            if not last_round_output.exists():
-                raise FileNotFoundError(f'last round output not exists for {task_id}')
-
-            last_round_log = read_json_file(last_round_output / 'log.json') 
-            output = output_root / data_source / f"round_{current}" / task_id
-            output.mkdir(parents=True, exist_ok=True)
-
-            if eval_results[task_id]:
-                logger.info(f'Last round processed as success for {task_id}, start the attack process...')
+        coros = []
+        for task in tasks:      
+            async def _run(task):  
+                task_id = task["task_id"].replace("/", "_")
+                if task_id in completed_tasks:
+                    return
                 
-                workspace = workspace_root / data_source / f"round_{current}" / f'{task_id}_attack_analysis'
-                workspace.mkdir(parents=True, exist_ok=True)
-                previous_injections_path = last_round_output / 'attack_analysis.json'
-                previous_injections = (
-                    read_json_file(previous_injections_path) 
-                        if previous_injections_path.exists() else []
-                )
+                logger.info(f'Round {current}: Start to process Task {task_id}')
+                last_round_output = output_root / data_source / f"round_{current-1}" / task_id
+                if not last_round_output.exists():
+                    raise FileNotFoundError(f'last round output not exists for {task_id}')
 
-                is_success = attack_analysis(
-                    task=last_round_log,
-                    workspace=workspace,
-                    output=output,
-                    backend=backend,
-                    skipping_exists=skip_existing,
-                    injection_history=previous_injections
-                )
+                last_round_log = read_json_file(last_round_output / 'log.json') 
+                output = output_root / data_source / f"round_{current}" / task_id
+                output.mkdir(parents=True, exist_ok=True)
 
-                if not is_success:
-                    logger.info(f'Attack Analysis Failed, skipping this round...')
-                    shutil.copytree(
-                        last_round_output,
-                        output,
-                        dirs_exist_ok=True
+                if eval_results[task_id]:
+                    logger.info(f'Last round processed as success for {task_id}, start the attack process...')
+                    
+                    workspace = workspace_root / data_source / f"round_{current}" / f'{task_id}_attack_analysis'
+                    workspace.mkdir(parents=True, exist_ok=True)
+                    previous_injections_path = last_round_output / 'attack_analysis.json'
+                    previous_injections = (
+                        read_json_file(previous_injections_path) 
+                            if previous_injections_path.exists() else []
                     )
-                    continue
 
-                replay_info = get_attack_analysis(output)
-            else:
-                logger.info(f'Last round processed as failure for {task_id}, start the diagnosis process...')
+                    is_success = await attack_analysis(
+                        task=last_round_log,
+                        workspace=workspace,
+                        output=output,
+                        backend=backend,
+                        skipping_exists=skip_existing,
+                        injection_history=previous_injections,
+                        semaphore=semaphore
+                    )
+
+                    if not is_success:
+                        logger.info(f'Attack Analysis Failed, skipping this round...')
+                        shutil.copytree(
+                            last_round_output,
+                            output,
+                            dirs_exist_ok=True
+                        )
+                        return
+
+                    replay_info = get_attack_analysis(output)
+                else:
+                    logger.info(f'Last round processed as failure for {task_id}, start the diagnosis process...')
+                    
+                    workspace = workspace_root / data_source / f"round_{current}" / f'{task_id}_diagnose_analysis'
+                    workspace.mkdir(parents=True, exist_ok=True)
+
+                    previous_injections_path = last_round_output / 'diagnose_analysis.json'
+                    previous_injections = (
+                        read_json_file(previous_injections_path) 
+                            if previous_injections_path.exists() else []
+                    )
+
+                    is_success = await diagnose_analysis(
+                        task=last_round_log,
+                        workspace=workspace,
+                        output=output,
+                        backend=backend,
+                        skipping_exists=skip_existing,
+                        injection_history=previous_injections,
+                        semaphore=semaphore
+                    )
+                    if not is_success:
+                        logger.info(f'Diagnose Analysis Failed, skipping this round...')
+                        shutil.copytree(
+                            last_round_output,
+                            output,
+                            dirs_exist_ok=True
+                        )
+                        return
+                    replay_info = get_diagnose_analysis(output)
                 
-                workspace = workspace_root / data_source / f"round_{current}" / f'{task_id}_diagnose_analysis'
-                workspace.mkdir(parents=True, exist_ok=True)
-
-                previous_injections_path = last_round_output / 'diagnose_analysis.json'
-                previous_injections = (
-                    read_json_file(previous_injections_path) 
-                        if previous_injections_path.exists() else []
-                )
-
-                is_success = diagnose_analysis(
-                    task=last_round_log,
-                    workspace=workspace,
-                    output=output,
-                    backend=backend,
-                    skipping_exists=skip_existing,
-                    injection_history=previous_injections
-                )
-                if not is_success:
-                    logger.info(f'Diagnose Analysis Failed, skipping this round...')
-                    shutil.copytree(
-                        last_round_output,
-                        output,
-                        dirs_exist_ok=True
-                    )
-                    continue
-                replay_info = get_diagnose_analysis(output)
-            
-            monitor = AttackMonitor(recovery_path, workspace, backend, replay_info[-1], last_round_log)
-            result = run_coding_task(
-                task,
-                workspace,
-                output,
-                backend,
-                skip_existing=skip_existing,
-                monitor=monitor
-            )
-            if not result:
-                logger.info(f'Replay Failed, skipping this round...')
-                shutil.copytree(
-                    last_round_output,
+                monitor = AttackMonitor(recovery_path, workspace, backend, replay_info[-1], last_round_log)
+                result = await run_coding_task(
+                    task,
+                    workspace,
                     output,
-                    dirs_exist_ok=True
+                    backend,
+                    skip_existing=skip_existing,
+                    monitor=monitor,
+                    semaphore=semaphore
                 )
-                continue
-
+                if not result:
+                    logger.info(f'Replay Failed, skipping this round...')
+                    shutil.copytree(
+                        last_round_output,
+                        output,
+                        dirs_exist_ok=True
+                    )
+                    return
+            coros.append(_run(task))
+        
+        await tqdm.gather(*coros)
         # save last round's eval results
         last_eval_results = eval_results
         eval_path = output_root / data_source / f"round_{current}"
@@ -246,19 +257,9 @@ def main(args):
                     last_round_log = read_json_file(last_round_output / 'log.json') 
                     workspace = workspace_root / data_source / f"round_{current}" / f'{task_id}_diagnose_analysis'
                     workspace.mkdir(parents=True, exist_ok=True)
-                    is_success = diagnose_analysis(
-                        task=last_round_log,
-                        workspace=workspace,
-                        output=output,
-                        backend=backend,
-                        skipping_exists=skip_existing,
-                    )
+                    
                     final_info = get_attack_analysis(output)
-                    if is_success:
-                        diagnose_info = get_diagnose_analysis(output)
-                        if match_info(final_info, diagnose_info):
-                           logger.info(f'Direct diagnose success, regarding as easy injection...')
-                           continue 
+                    
                 else:
                     last_round_output = output_root / data_source / f"round_{current-1}" / task_id
                     if not last_round_output.exists():
@@ -309,4 +310,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(args)
+    asyncio.run(main(args))

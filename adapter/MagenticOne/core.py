@@ -121,7 +121,7 @@ class MagenticOneAdapter(BaseAdapter):
         """Return ``model_prediction`` text derived only from ``TaskResult`` (see ``run_coding_task``)."""
         return self._task_result_prediction or ""
 
-    def run_backend(
+    async def run_backend(
         self,
         idea: str,
         workspace: Path,
@@ -145,7 +145,7 @@ class MagenticOneAdapter(BaseAdapter):
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-        asyncio.run(self._run_team(task_text, workspace, monitor, trace_path))
+        await self._run_team(task_text, workspace, monitor, trace_path)
         self._last_trace_path = trace_path
 
         if monitor is not None:
@@ -171,7 +171,7 @@ class MagenticOneAdapter(BaseAdapter):
             ) from e
 
         max_attempts = int(os.environ.get("TE_MG2_RUN_MAX_ATTEMPTS", "5"))
-        retry_base = float(os.environ.get("TE_MG2_RUN_RETRY_BASE_SEC", "10"))
+        retry_base = float(os.environ.get("TE_MG2_RUN_RETRY_BASE_SEC", "1"))
 
         model_client = _build_model_client()
         if isinstance(monitor, AttackMonitor):
@@ -259,7 +259,7 @@ class MagenticOneAdapter(BaseAdapter):
                 logger.warning("MagenticOne run_stream attempt %s/%s failed: %s", attempt + 1, max_attempts, exc)
                 transient = is_transient_run_stream_failure(exc)
                 if transient and attempt + 1 < max_attempts:
-                    delay = retry_base * (2**attempt)
+                    delay = retry_base
                     logger.info("Retrying MagenticOne in %.1fs (transient error)...", delay)
                     await asyncio.sleep(delay)
                     continue

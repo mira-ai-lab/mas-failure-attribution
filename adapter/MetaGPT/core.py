@@ -177,7 +177,7 @@ class MetaGPTAdapter(BaseAdapter):
             asyncio.run(_safe_close_ctx_llm())
             return ctx.kwargs.get("project_path")
     
-    def run_backend(
+    async def run_backend(
         self,
         idea: str,
         workspace: Path,

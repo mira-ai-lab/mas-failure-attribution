@@ -9,7 +9,7 @@ class BaseAdapter(ABC):
     """Define the minimal interface required by the pipeline runtime."""
 
     @abstractmethod
-    def run_backend(
+    async def run_backend(
         self,
         idea: str,
         workspace: Path,
