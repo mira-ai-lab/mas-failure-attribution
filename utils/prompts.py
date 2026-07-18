@@ -39,7 +39,7 @@ Step-by-Step Guideline:
 1. **!VERY IMPORTANT!** YOU SHOULD CREATE A FILE NAMED `{task_id}_attack_analysis.json` FIRST in the path {workspace}
 2. THEN, WRITE THE JSON CONTENT INTO THE FILE
 you can use the following commands which can help you complete this task.
-            - Editor.create_file(filename: str)
+    - Editor.create_file(filename: str)
     - Editor.insert_content_at_line(file_name: str, line_number: int, insert_content: str)
     - Editor.edit_file_by_replace(file_name: str,
         first_replaced_line_number: int,

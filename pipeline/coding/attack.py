@@ -43,45 +43,28 @@ async def attack_analysis(
         ``True`` when a valid attack analysis is generated, otherwise ``False``.
     """
     task_id = task["question_ID"]
-    logger.info(f'Attack Analysis start for Task ID: {task_id}')
-    if len(injection_history) > 0:
-        min_step_id = injection_history[-1]['step_id']
-    else:
-        min_step_id = 0
-    allowed_step_ids = [
-        item.get('step')
-        for item in task.get('history', [])
-        if isinstance(item, dict) and isinstance(item.get('step'), int)
-    ]
-    idea = ATTACK_ANALYSIS_PROMPT.format(
-        task_id=task["question_ID"],
-        question=task["question"],
-        ground_truth=task["ground_truth"],
-        model_prediction=task["model_prediction"],
-        fault_pool_json=fault_candidates_for_prompt(),
-        topology_info=task['topology'],
-        history_str=task['history'],
-        injection_history=injection_history,
-        min_step_id=min_step_id,
-        allowed_step_ids=allowed_step_ids,
-    )
     log = output / 'attack_analysis.json'
-    if log.exists():
-        if skipping_exists:
-            logger.info(f'Log for task {task_id} exists, skipping this round...')
-            try:
-                validate_attribution_info(task, read_json_file(log))
-            except ValueError as e:
-                logger.error(f'Existing attack analysis invalid for task {task_id}: {e}')
-                return False
-            return True
-    async with semaphore:
-        task_id = task["question_ID"]
+
+    if log.exists() and skipping_exists:
+        logger.info(f'Log for task {task_id} exists, skipping this round...')
+        try:
+            validate_attribution_info(task, read_json_file(log))
+        except ValueError as e:
+            logger.error(f'Existing attack analysis invalid for task {task_id}: {e}')
+            return False
+        return True
+   
+    async def _run_backend():
         logger.info(f'Attack Analysis start for Task ID: {task_id}')
         if len(injection_history) > 0:
             min_step_id = injection_history[-1]['step_id']
         else:
             min_step_id = 0
+        allowed_step_ids = [
+            item.get('step')
+            for item in task.get('history', [])
+            if isinstance(item, dict) and isinstance(item.get('step'), int)
+        ]
         result_path = workspace / f'{task_id}_attack_analysis.json'
         idea = ATTACK_ANALYSIS_PROMPT.format(
             task_id=task["question_ID"],
@@ -92,17 +75,17 @@ async def attack_analysis(
             topology_info=task['topology'],
             history_str=task['history'],
             injection_history=injection_history,
+            allowed_step_ids=allowed_step_ids,
             min_step_id=min_step_id,
             max_step_id=len(task['history']),
             message=message,
             workspace=result_path,
         )
-        
-        log = output / 'attack_analysis.json'
+
         if log.exists():
             if skipping_exists:
                 logger.info(f'Log for task {task_id} exists, skipping this round...')
-                return
+                return read_json_file(log)
             else:
                 logger.info(f'Log for task {task_id} exists, overriding...')
                 shutil.rmtree(workspace, ignore_errors=True)
@@ -118,7 +101,7 @@ async def attack_analysis(
             )
         except Exception as e:
             logger.error(f"Error running task {task_id}: {e}")
-            return False
+            return None
         
         logger.info(f'Task {task_id} ends executing...')
         if result_path.exists():
@@ -134,19 +117,28 @@ async def attack_analysis(
                     f.write(result)
             except:
                 logger.error(f'attack analysis result modify errors for task {task_id}')
-                return False
+                return None
             try:
                 attack_suggestion = read_json_file(result_path)
             except:
                 logger.error(f'attack analysis result read errors for task {task_id}')
-                return False
+                return None
         else:
             logger.error(f'attack analysis result not found for task {task_id}')
-            return False
+            return None
         
         attacked_step = attack_suggestion['step_id']
         if attacked_step <= min_step_id or attacked_step > len(task['history']):
-            return False
+            return None
+        return attack_suggestion
+
+    if semaphore is None:
+        attack_suggestion = await _run_backend()
+    else:
+        async with semaphore:
+            attack_suggestion = await _run_backend()
+    if not attack_suggestion:
+        return False
 
     attack_history = injection_history + [attack_suggestion]
     try:

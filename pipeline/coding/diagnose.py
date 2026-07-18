@@ -43,73 +43,52 @@ async def diagnose_analysis(
         ``True`` when a valid diagnosis analysis is generated, otherwise ``False``.
     """
     task_id = task["question_ID"]
-    logger.info(f'Diagnose Analysis start for Task ID: {task_id}, workspace: {workspace}, output: {output}')
-    if len(injection_history) > 0:
-        min_step_id = injection_history[-1]['step_id']
-    else:
-        min_step_id = 0
+    logger.info(
+        f"Diagnose Analysis start for Task ID: {task_id}, "
+        f"workspace: {workspace}, output: {output}"
+    )
+    min_step_id = injection_history[-1]["step_id"] if injection_history else 0
+    log = output / "diagnose_analysis.json"
+    if log.exists() and skipping_exists:
+        logger.info(f"Log for task {task_id} exists, skipping this round...")
+        try:
+            validate_attribution_info(task, read_json_file(log))
+        except ValueError as e:
+            logger.error(f"Existing diagnose analysis invalid for task {task_id}: {e}")
+            return False
+        return True
+
+    result_path = workspace / f"{task_id}_diagnose_analysis.json"
+    prompt_template = get_diagnose_analysis_prompt(diagnose_mode)
     allowed_step_ids = [
-        item.get('step')
-        for item in task.get('history', [])
-        if isinstance(item, dict) and isinstance(item.get('step'), int)
+        item.get("step")
+        for item in task.get("history", [])
+        if isinstance(item, dict) and isinstance(item.get("step"), int)
     ]
-    idea = DIAGNOSE_ANALYSIS_PROMPT.format(
+    idea = prompt_template.format(
         task_id=task["question_ID"],
         question=task["question"],
         ground_truth=task["ground_truth"],
         model_prediction=task["model_prediction"],
         fault_pool_json=fault_candidates_for_prompt(),
-        topology_info=task['topology'],
-        history_str=task['history'],
+        topology_info=task["topology"],
+        history_str=task["history"],
         injection_history=injection_history,
-        min_step_id=min_step_id,
         allowed_step_ids=allowed_step_ids,
+        min_step_id=min_step_id,
+        max_step_id=len(task["history"]),
+        message=message,
+        workspace=result_path,
     )
-    log = output / 'diagnose_analysis.json'
-    if log.exists():
-        if skipping_exists:
-            logger.info(f'Log for task {task_id} exists, skipping this round...')
-            try:
-                validate_attribution_info(task, read_json_file(log))
-            except ValueError as e:
-                logger.error(f'Existing diagnose analysis invalid for task {task_id}: {e}')
-                return False
-            return True
-    async with semaphore:
-        task_id = task["question_ID"]
-        logger.info(f'Diagnose Analysis start for Task ID: {task_id}, workspace: {workspace}, output: {output}')
-        if len(injection_history) > 0:
-            min_step_id = injection_history[-1]['step_id']
-        else:
-            min_step_id = 0
-        result_path = workspace / f'{task_id}_diagnose_analysis.json'
-        prompt_template = get_diagnose_analysis_prompt(diagnose_mode)
-        idea = prompt_template.format(
-            task_id=task["question_ID"],
-            question=task["question"],
-            ground_truth=task["ground_truth"],
-            model_prediction=task["model_prediction"],
-            fault_pool_json=fault_candidates_for_prompt(),
-            topology_info=task['topology'],
-            history_str=task['history'],
-            injection_history=injection_history,
-            min_step_id=min_step_id,
-            max_step_id=len(task['history']),
-            message=message,
-            workspace=result_path,
-        )
-        log = output / 'diagnose_analysis.json'
-        if log.exists():
-            if skipping_exists:
-                logger.info(f'Log for task {task_id} exists, skipping this round...')
-                return
-            else:
-                logger.info(f'Log for task {task_id} exists, overriding...')
-                shutil.rmtree(workspace, ignore_errors=True)
-                shutil.rmtree(output, ignore_errors=True)
-                workspace.mkdir(parents=True, exist_ok=True)
-                output.mkdir(parents=True, exist_ok=True)
 
+    if log.exists():
+        logger.info(f"Log for task {task_id} exists, overriding...")
+        shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(output, ignore_errors=True)
+        workspace.mkdir(parents=True, exist_ok=True)
+        output.mkdir(parents=True, exist_ok=True)
+
+    async def _run_backend() -> bool:
         try:
             await backend.run_backend(
                 idea=idea,
@@ -119,8 +98,47 @@ async def diagnose_analysis(
         except Exception as e:
             logger.error(f"Error running task {task_id}: {e}")
             return False
+        return True
+
+    if semaphore is None:
+        ok = await _run_backend()
     else:
-        logger.error(f'diagnose analysis result not found for task {task_id}')
+        async with semaphore:
+            ok = await _run_backend()
+    if not ok:
+        return False
+
+    logger.info(f"Task {task_id} ends executing...")
+    if not result_path.exists():
+        logger.error(f"diagnose analysis result not found for task {task_id}")
+        return False
+
+    try:
+        with open(result_path, "r+", encoding="utf-8") as f:
+            result = f.read().replace("\n", " ")
+            first = result.index("{")
+            last = result.rindex("}")
+            result = result[first:last + 1]
+            f.seek(0)
+            f.truncate()
+            f.write(result)
+    except Exception:
+        logger.error(f"diagnose analysis result modify errors for task {task_id}")
+        return False
+
+    try:
+        diagnose_suggestion = read_json_file(result_path)
+    except Exception:
+        logger.error(f"diagnose analysis result read errors for task {task_id}")
+        return False
+
+    if isinstance(diagnose_suggestion, list):
+        diagnose_suggestion = diagnose_suggestion[0]
+    if "step_id" not in diagnose_suggestion:
+        return False
+
+    diagnose_step = diagnose_suggestion["step_id"]
+    if diagnose_step <= min_step_id or diagnose_step > len(task["history"]):
         return False
 
     diagnose_history = injection_history + [diagnose_suggestion]
@@ -130,47 +148,7 @@ async def diagnose_analysis(
         logger.error(f'Diagnose analysis invalid for task {task_id}: {e}')
         return False
 
-    write_json_file(
-        log,
-        diagnose_history
-    )
-        
-        logger.info(f'Task {task_id} ends executing...')
-        if result_path.exists():
-            try:
-                with open(result_path, 'r+') as f:
-                    result = f.read()
-                    result = result.replace('\n', ' ')
-                    first = result.index('{')
-                    last = result.index('}')
-                    result = result[first:last+1]
-                    f.seek(0)          # 指针移到开头
-                    f.truncate()       # 清空原有内容
-                    f.write(result)
-            except:
-                logger.error(f'attack analysis result modify errors for task {task_id}')
-                return False
-            try:
-                diagnose_suggestion = read_json_file(result_path)
-            except:
-                logger.error(f'attack analysis result read errors for task {task_id}')
-                return False
-        else:
-            logger.error(f'diagnose analysis result not found for task {task_id}')
-            return False
-        if isinstance(diagnose_suggestion, list):
-            diagnose_suggestion = diagnose_suggestion[0]
-        
-        if not 'step_id' in diagnose_suggestion:
-            return False
-        diagnose_step = diagnose_suggestion['step_id']
-        if diagnose_step <= min_step_id or diagnose_step > len(task['history']):
-            return False
-        
-        write_json_file(
-            log,
-            injection_history + [diagnose_suggestion]
-        )
+    write_json_file(log, diagnose_history)
     return True
 
 def get_diagnose_analysis(
