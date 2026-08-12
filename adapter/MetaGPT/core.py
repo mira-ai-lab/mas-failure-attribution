@@ -71,7 +71,6 @@ class MetaGPTAdapter(BaseAdapter):
         recover_path: Path = None,
         monitor: BaseMonitor = None,
         use_async: bool = False,
-        enable_lint: bool = True,
     ):
         """Run or resume a MetaGPT team and execute the given task instruction."""
         
@@ -145,16 +144,15 @@ class MetaGPTAdapter(BaseAdapter):
         workspace: Path,
         recovery: Path = None,
         monitor: BaseMonitor = None,
-        enable_lint: bool = True,
+        task_id: str | None = None,
     ):
         """Execute backend task using adapter defaults for round count and setup."""
         return await self.generate_repo(
             idea=idea,
-            n_round=20,
+            n_round=5,
             recover_path=recovery,
             workspace=workspace,
             monitor=monitor,
-            enable_lint=enable_lint,
             use_async=True
         )
     

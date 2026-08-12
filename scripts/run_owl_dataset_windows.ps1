@@ -103,8 +103,7 @@ for ($i = $Start; $i -lt ($Start + $Count); $i++) {
         "--output", $Output,
         "--max_rounds", "$MaxRounds",
         "--max_samples", "1",
-        "--sample_offset", "$i",
-        "--per_task_rounds"
+        "--sample_offset", "$i"
     )
     if ($ResolvedEnvFile -ne "") {
         $argsList += @("--env_file", $ResolvedEnvFile)

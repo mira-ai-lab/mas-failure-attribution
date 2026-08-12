@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from types import ModuleType
 
+from utils.llm_client_hooks import install_llm_rate_limit_hooks
 from utils.logging import logger
 
 
@@ -61,6 +62,8 @@ def bootstrap_backend_runtime(backend_name: str, env_file: Path | None) -> None:
         resolved_env = env_file.expanduser().resolve()
         os.environ["MAS_FA_ENV_FILE"] = str(resolved_env)
         _default_load_env_file(resolved_env)
+
+    install_llm_rate_limit_hooks()
 
     if runtime_module is None:
         return

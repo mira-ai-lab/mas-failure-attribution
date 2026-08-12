@@ -81,6 +81,7 @@ async def run_code_generation_task(
                 workspace=workspace,
                 recovery=recovery_dir,
                 monitor=monitor,
+                task_id=task_id,
             )
         except Exception as exc:
             logger.error(f"Error running task {data_source}/{task_id}: {exc}")
@@ -97,7 +98,9 @@ async def run_code_generation_task(
         history = monitor.history if monitor is not None else []
         topology = monitor.topology if monitor is not None else {}
         used_roles = {h.name for h in history}
-        system_prompts = {name: prompt_map[name] for name in used_roles if name in prompt_map}
+        topology_nodes = set(getattr(topology, "nodes", []) or [])
+        visible_roles = used_roles | topology_nodes
+        system_prompts = {name: prompt_map[name] for name in visible_roles if name in prompt_map}
 
         with open(log, "w", encoding="utf-8") as f:
             json.dump(

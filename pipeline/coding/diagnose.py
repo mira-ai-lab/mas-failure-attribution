@@ -1,14 +1,14 @@
 """Diagnosis-analysis stage for proposing root-cause fix suggestions."""
 
 from asyncio import Semaphore
-import json
 from pathlib import Path
 import shutil
-from typing import Type
 
 from adapter.base_adapter import BaseAdapter
 from utils.common import (
+    extract_json_object_from_model_output,
     read_json_file,
+    run_llm_completion,
     validate_attribution_info,
     write_json_file,
 )
@@ -88,49 +88,63 @@ async def diagnose_analysis(
         workspace.mkdir(parents=True, exist_ok=True)
         output.mkdir(parents=True, exist_ok=True)
 
-    async def _run_backend() -> bool:
+    async def _run_backend() -> object | None:
+        backend_result = None
         try:
-            await backend.run_backend(
-                idea=idea,
-                workspace=workspace,
-                enable_lint=False,
-            )
+            backend_result = await run_llm_completion(idea)
         except Exception as e:
             logger.error(f"Error running task {task_id}: {e}")
-            return False
-        return True
+            return None
+        return backend_result
 
     if semaphore is None:
-        ok = await _run_backend()
+        backend_result = await _run_backend()
     else:
         async with semaphore:
-            ok = await _run_backend()
-    if not ok:
+            backend_result = await _run_backend()
+    if backend_result is None:
         return False
 
     logger.info(f"Task {task_id} ends executing...")
     if not result_path.exists():
-        logger.error(f"diagnose analysis result not found for task {task_id}")
-        return False
+        diagnose_suggestion = extract_json_object_from_model_output(
+            backend_result,
+            required_keys={
+                "step_id",
+                "fault_code",
+                "suggested_fix",
+                "mistake_reason",
+                "related_error",
+            },
+        )
+        if diagnose_suggestion is None:
+            logger.error(f"diagnose analysis result not found for task {task_id}")
+            return False
+        write_json_file(result_path, diagnose_suggestion)
+        logger.warning(
+            "Recovered missing diagnose analysis file from backend return for task %s -> %s",
+            task_id,
+            result_path,
+        )
+    else:
+        try:
+            with open(result_path, "r+", encoding="utf-8") as f:
+                result = f.read().replace("\n", " ")
+                first = result.index("{")
+                last = result.rindex("}")
+                result = result[first:last + 1]
+                f.seek(0)
+                f.truncate()
+                f.write(result)
+        except Exception:
+            logger.error(f"diagnose analysis result modify errors for task {task_id}")
+            return False
 
-    try:
-        with open(result_path, "r+", encoding="utf-8") as f:
-            result = f.read().replace("\n", " ")
-            first = result.index("{")
-            last = result.rindex("}")
-            result = result[first:last + 1]
-            f.seek(0)
-            f.truncate()
-            f.write(result)
-    except Exception:
-        logger.error(f"diagnose analysis result modify errors for task {task_id}")
-        return False
-
-    try:
-        diagnose_suggestion = read_json_file(result_path)
-    except Exception:
-        logger.error(f"diagnose analysis result read errors for task {task_id}")
-        return False
+        try:
+            diagnose_suggestion = read_json_file(result_path)
+        except Exception:
+            logger.error(f"diagnose analysis result read errors for task {task_id}")
+            return False
 
     if isinstance(diagnose_suggestion, list):
         diagnose_suggestion = diagnose_suggestion[0]

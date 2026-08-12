@@ -1,0 +1,6 @@
+llm:
+  api_type: openai
+  api_key: sk-KrcPdfOdwYPvC7Naz4e8Y5X8R05cpmJHSLjpHGrC0PE9hOMk
+  base_url: https://api.qingyuntop.top/v1
+  model: gpt-4o-mini
+  temperature: 0.0

@@ -47,7 +47,7 @@ class BaseMonitor(BaseModel):
         monitor_info_path = stg_path.joinpath("monitor.json")
         if not monitor_info_path.exists():
             raise FileNotFoundError(
-                "recover storage meta file `team.json` not exist, " "not to recover and please start a new project."
+                "recover storage meta file `` not exist, " "not to recover and please start a new project."
             )
 
         monitor_info: dict = read_json_file(monitor_info_path)

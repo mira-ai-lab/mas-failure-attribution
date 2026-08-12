@@ -98,7 +98,8 @@ async def run_coding_task(
                 idea=idea,
                 workspace=workspace,
                 recovery=recovery_dir,
-                monitor=monitor
+                monitor=monitor,
+                task_id=task_id,
             )
         except Exception as e:
             logger.error(f"Error running task {data_source}/{task_id}: {e}")

@@ -36,6 +36,7 @@ class ThinkMiddleware(Middleware):
         if self.monitor is None or not isinstance(self.monitor, AttackMonitor):
             return
         system_msgs = ctx.kwargs.get('system_msgs')
+        #如果调用方没传 system prompt，就造一个只含一个空字符串的列表，这样下一行 system_msgs[0] = ... 不会因为 None[0] 或空列表而报错。
         if system_msgs is None:
             system_msgs = [""]
         system_msgs[0] = self.monitor.inject_content(default_value=system_msgs[0])

@@ -6,15 +6,49 @@ commit unless explicitly requested.
 
 代码默认从本目录读取数据集。大型原始数据和生成的 parquet 属于数据资产；除非明确要求，否则不放进干净代码提交。
 
-## Expected Files / 预期文件
+## Default Dataset Resolution / 默认数据集解析
+
+`main.py --dataset` now accepts either:
+
+`main.py --dataset` 现在既可以接收：
+
+- a concrete file path / 一个明确的文件路径
+- a dataset alias such as `gaia` or `kodcode` / 一个数据集别名，例如 `gaia`、`kodcode`
+
+Current built-in aliases resolve to these default files:
+
+当前内置别名会优先解析到这些默认文件：
 
 | Dataset | Required by runner | Can be generated from |
 |---|---|---|
 | KodCode | `code/kodcode-light-rl-10k-hard.parquet` | external prepared parquet |
-| GAIA | `gaia/gaia_validation.parquet` | `gaia/2023/validation/metadata.parquet` |
+| GAIA | `gaia/gaia_validation.parquet` if present, otherwise `gaia_dataset_raw/2023/validation/metadata.parquet` | raw GAIA validation metadata |
+| HotpotQA | `hotpotqa.parquet` | external prepared parquet |
+| HumanEval | `humaneval.parquet` | external prepared parquet |
+| MBPP | `mbpp.parquet` | external prepared parquet |
+| SWE-bench | `swebench.parquet` | external prepared parquet |
+
+Notes:
+
+说明：
+
+- `gaia` intentionally maps to the validation split, not the test split.
+- If you pass an explicit path, it is used as-is and bypasses alias resolution.
+
+- `gaia` 会刻意映射到 validation，而不是 test。
+- 如果你传的是显式路径，则直接使用该路径，不走别名解析。
+
+## Optional Prepared Files / 可选预处理文件
+
+Some datasets also have prepared files or raw sources used by scripts, even if
+they are not part of the current built-in alias table.
+
+有些数据集还存在脚本会使用到的预处理文件或原始文件，即使它们不在当前内置别名表中。
+
+| Dataset | Prepared file / 预处理文件 | Raw source / 原始来源 |
+|---|---|---|
 | BrowseComp | `browsecomp/browsecomp.parquet` | `browsecomp/browse_comp_test_set.csv` |
 | AssistantBench | `assistantbench/assistantbench_dev.parquet` | `assistantbench/assistant_bench_v1.0_dev.jsonl` |
-| HotpotQA | `hotpotqa/hotpotqa_validation_full.parquet` | external prepared parquet |
 
 ## Preparation Commands / 转换命令
 

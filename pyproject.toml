@@ -26,9 +26,21 @@ dependencies = [
 metagpt = [
   "metagpt @ git+https://github.com/yuyueryuyu/MetaGPT.git",
 ]
+# Backend: CaptainAgent (AG2/AutoGen).
+# CAPTAIN_TOOL_LIB=duckduckgo also needs interop-langchain + duckduckgo extras.
+captain = [
+  "ag2[openai,captainagent,interop-langchain,duckduckgo]>=0.0.0",
+  "ddgs>=9.0.0",
+]
+# Backend: OWL/CAMEL. Upstream package name is `owl`, whose current pyproject
+# reports version 0.0.1 on the pinned commit below. The upstream repo does not
+# currently publish GitHub releases/tags, so we pin the git SHA for stability.
+owl = [
+  "owl @ git+https://github.com/camel-ai/owl.git@98d150d29b4a1f0d362695df936dc3da2ced875a",
+]
 # All registered backends; add new optional groups when you add adapters (e.g. autogen, langgraph).
 all = [
-  "mas-failure-attribution[metagpt]",
+  "mas-failure-attribution[metagpt,captain,owl]",
 ]
 dev = [
   "pytest>=7.0.0",

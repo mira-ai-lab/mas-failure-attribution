@@ -14,15 +14,16 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable
+from urllib.parse import unquote, urlparse
 
 from adapter.base_adapter import BaseAdapter
 from monitor.base_monitor import BaseMonitor, RoleType
 from model.schema import History, Topology
 from utils.logging import logger
+from utils.owl_runtime import ensure_owl_runtime_available, load_owl_env
 from utils.prompts import REPLAY_PROMPT
 
 
-OWL_REPO_ENV = "OWL_REPO_PATH"
 OWL_STATE_FILE = "owl_state.json"
 MAX_HISTORY_CHARS = 6000
 MAX_EVENT_CHARS = 3000
@@ -225,42 +226,27 @@ Write the resulting artifact expected by the task. Do not explain the change;
 just continue the work naturally.
 """
 
-def _find_owl_repo() -> Path | None:
-    """Locate the sibling OWL repository without hard-coding one layout only."""
-    if os.getenv(OWL_REPO_ENV):
-        return Path(os.environ[OWL_REPO_ENV]).expanduser().resolve()
-
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidate = parent / "owl"
-        if (candidate / "owl").exists() and (candidate / "pyproject.toml").exists():
-            return candidate
-    return None
+def _bootstrap_owl_runtime() -> Path | None:
+    """Validate installed OWL/CAMEL dependencies and load optional env files."""
+    ensure_owl_runtime_available(require_api_keys=False)
+    return load_owl_env()
 
 
-def _bootstrap_owl_imports() -> Path | None:
-    """Make the local OWL repository and its .env available to this adapter."""
-    owl_repo = _find_owl_repo()
-    if owl_repo and str(owl_repo) not in sys.path:
-        sys.path.insert(0, str(owl_repo))
+def _wikipedia_entity_from_url(document_path: str) -> str:
+    """Return a Wikipedia entity title for ordinary wiki article URLs."""
 
-    try:
-        from dotenv import load_dotenv
-    except Exception:
-        load_dotenv = None
-
-    if load_dotenv and owl_repo:
-        env_file = os.environ.get("MAS_FA_ENV_FILE")
-        if env_file:
-            load_dotenv(dotenv_path=str(Path(env_file).expanduser().resolve()), override=True)
-        for env_path in (
-            owl_repo / "owl" / ".env.gaia",
-            owl_repo / "owl" / ".env",
-            owl_repo / ".env",
-        ):
-            if env_path.exists():
-                load_dotenv(dotenv_path=str(env_path), override=False)
-    return owl_repo
+    parsed = urlparse(document_path)
+    host = parsed.netloc.lower()
+    if not host.endswith("wikipedia.org"):
+        return ""
+    marker = "/wiki/"
+    if marker not in parsed.path:
+        return ""
+    title = parsed.path.split(marker, 1)[1].split("/", 1)[0]
+    title = unquote(title).replace("_", " ").strip()
+    if not title or ":" in title:
+        return ""
+    return title
 
 
 def _jsonable(value: Any, _depth: int = 0, _seen: set[int] | None = None) -> Any:
@@ -378,7 +364,7 @@ class OWLAdapter(BaseAdapter):
     """Adapter implementation that runs coding tasks with OWL/CAMEL Workforce."""
 
     def __init__(self) -> None:
-        self.owl_repo = _bootstrap_owl_imports()
+        self.owl_env_file = _bootstrap_owl_runtime()
         self.workforce = None
         self._monitor: BaseMonitor | None = None
         self._runtime_events: list[dict[str, Any]] = []
@@ -403,7 +389,7 @@ class OWLAdapter(BaseAdapter):
         workspace: Path,
         recovery: Path = None,
         monitor: BaseMonitor = None,
-        enable_lint: bool = True,
+        task_id: str | None = None,
     ):
         """Execute or replay an OWL/CAMEL workforce task inside ``workspace``."""
         self._monitor = monitor
@@ -421,6 +407,10 @@ class OWLAdapter(BaseAdapter):
             or bool(re.search(r"\bINJECTION INFO\b|\bINJECTION_INFO\b", idea, re.IGNORECASE))
         )
         self._run_mode = self._detect_run_mode(idea)
+        self._token_info = {
+            "completion_token_count": 0,
+            "prompt_token_count": 0,
+        }
 
         workspace.mkdir(parents=True, exist_ok=True)
         checkpoint = self._prepare_replay_checkpoint(workspace, recovery, monitor)
@@ -440,6 +430,8 @@ class OWLAdapter(BaseAdapter):
         self._pending_tool_events = []
 
         self._execute_workforce(run_idea, workspace)
+        if self._run_mode == "gaia":
+            self._write_web_research_artifacts(workspace)
         return workspace
 
     def _execute_workforce(self, idea: str, workspace: Path) -> None:
@@ -466,6 +458,16 @@ class OWLAdapter(BaseAdapter):
                     raise ValueError("OWL GAIA workforce created empty final_answer.txt")
             elif re.search(r"\bsolution\.py\b", idea) and not (workspace / "solution.py").exists():
                 raise FileNotFoundError("OWL workforce did not create solution.py")
+
+    def _write_web_research_artifacts(self, workspace: Path) -> None:
+        """Persist web-research runtime artifacts expected by the pipeline."""
+
+        raw_answer = self._last_result or ""
+        (workspace / "raw_answer.txt").write_text(raw_answer, encoding="utf-8")
+        (workspace / "token_info.json").write_text(
+            json.dumps(self._token_info, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _analysis_workforce_instruction(self, idea: str) -> str:
         """Add a strict output contract for analysis artifact generation."""
@@ -986,13 +988,19 @@ class OWLAdapter(BaseAdapter):
         file_toolkit = FileToolkit()
         workspace_tools = self._workspace_tools(Path.cwd())
 
+        def extract_document_content(document_path: str):
+            entity = _wikipedia_entity_from_url(document_path)
+            if entity:
+                return search_toolkit.search_wiki(entity)
+            return document_toolkit.extract_document_content(document_path)
+
         researcher_tools = [
             FunctionTool(search_toolkit.search_duckduckgo),
             FunctionTool(search_toolkit.search_wiki),
-            FunctionTool(document_toolkit.extract_document_content),
+            FunctionTool(extract_document_content),
         ]
         document_tools = [
-            FunctionTool(document_toolkit.extract_document_content),
+            FunctionTool(extract_document_content),
             FunctionTool(image_toolkit.ask_question_about_image),
             FunctionTool(code_toolkit.execute_code),
             FunctionTool(excel_toolkit.extract_excel_content),
@@ -1002,7 +1010,7 @@ class OWLAdapter(BaseAdapter):
         reasoning_tools = [
             FunctionTool(code_toolkit.execute_code),
             FunctionTool(excel_toolkit.extract_excel_content),
-            FunctionTool(document_toolkit.extract_document_content),
+            FunctionTool(extract_document_content),
             *workspace_tools,
         ]
 
@@ -1971,7 +1979,7 @@ class OWLAdapter(BaseAdapter):
         """Return the adapter runtime snapshot written to ``owl_state.json``."""
         return {
             "backend": "OWL",
-            "owl_repo": str(self.owl_repo) if self.owl_repo else None,
+            "owl_env_file": str(self.owl_env_file) if self.owl_env_file else None,
             "workspace": self._last_workspace,
             "recovery": self._last_recovery,
             "last_idea": self._last_idea,
@@ -2093,14 +2101,7 @@ class OWLAdapter(BaseAdapter):
 
     def _ensure_camel_available(self) -> None:
         """Raise a clear error if OWL/CAMEL dependencies are unavailable."""
-        try:
-            import camel  # noqa: F401
-        except Exception as exc:
-            raise RuntimeError(
-                "OWLAdapter requires CAMEL/OWL dependencies. Install the OWL "
-                "project dependencies and run with the environment that contains "
-                "`camel-ai`."
-            ) from exc
+        ensure_owl_runtime_available(require_api_keys=False)
 
     @staticmethod
     def _agent_name(agent: Any) -> str:

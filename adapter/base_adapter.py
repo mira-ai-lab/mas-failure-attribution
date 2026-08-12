@@ -15,7 +15,7 @@ class BaseAdapter(ABC):
         workspace: Path,
         recovery: Path = None,
         monitor = None,
-        enable_lint: bool = True,
+        task_id: str | None = None,
     ):
         """Execute a task idea inside a workspace with optional recovery/monitoring."""
         pass
@@ -24,3 +24,7 @@ class BaseAdapter(ABC):
     def get_prompt_map(self) -> Dict[str, str]:
         """Return role-to-system-prompt mapping used for experiment logging."""
         pass
+
+    def get_trace_log(self) -> Dict[str, object] | None:
+        """Return optional structured trace data for log.json generation."""
+        return None

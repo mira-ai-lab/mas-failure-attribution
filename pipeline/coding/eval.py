@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from pipeline.eval.core import evaluate_round, load_eval_results
-from pipeline.eval.scorers.llm_judge import BROWSECOMP_GRADER_TEMPLATE, judge_answer as _judge_browsecomp_answer
+from pipeline.eval.scorers.llm_judge import JUDGE_ANSWER, judge_answer as _judge_browsecomp_answer
 from pipeline.eval.scorers.rule_based import gaia_score
 from pipeline.eval.scorers.sandbox import code_exec, code_exec_async
 

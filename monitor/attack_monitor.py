@@ -44,7 +44,7 @@ class AttackMonitor(BaseMonitor):
         monitor_info_path = stg_path.joinpath("monitor.json")
         if not monitor_info_path.exists():
             raise FileNotFoundError(
-                "recover storage meta file `team.json` not exist, " "not to recover and please start a new project."
+                "recover storage meta file `` not exist, " "not to recover and please start a new project."
             )
 
         monitor_info: dict = read_json_file(monitor_info_path)
@@ -58,10 +58,21 @@ class AttackMonitor(BaseMonitor):
         )
         return monitor
 
-    def inject_content(self, default_value:str) -> str:
+    def inject_content(self, default_value: str) -> str:
         if self.should_inject():
-            logger.info(f'Injection step detected, injecting...')
+            logger.info("Injection step detected, injecting...")
             self._injected = True
+            if not (default_value or "").strip():
+                # default_value should be the agent's system prompt (persona) when injecting
+                # via the system channel (see observe.py::_inject_replay_prompt_system).
+                # Do NOT fall back to the previous round's step content: that content carries
+                # the previous round's (possibly correct) answer into ORIGINAL_TASK, which
+                # makes the LLM reproduce the correct answer and defeats the injection.
+                logger.error(
+                    "[inject-debug] original_task empty on inject (step=%s); expected the "
+                    "agent system prompt as default_value. Injecting with empty ORIGINAL_TASK.",
+                    self.step,
+                )
             return REPLAY_PROMPT.format(
                 original_task=default_value,
                 injection_info=self._attack_suggestion,
@@ -69,11 +80,16 @@ class AttackMonitor(BaseMonitor):
         return default_value
 
     def get_current_reply(self) -> str:
-        return self._last_round_log['history'][self.step-1]['content'].replace('/mnt/c/Users/余凯越/mas-failure-attribution', '/mnt/c/Users/余凯越/mas-failure-attribution')
+        return self._last_round_log['history'][self.step-1]['content']
 
     def should_inject(self):
         """Return True when current step matches configured injection step."""
-        return self.step == self._attack_step
+        return self.step == self._attack_step and not self._injected
+
+    @property
+    def attack_step(self) -> int:
+        """Expose configured attack step for middleware branching."""
+        return self._attack_step
     
     def is_injected(self) -> bool:
         return self._injected

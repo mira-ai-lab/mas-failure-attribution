@@ -45,27 +45,26 @@ OWL dependency:
 
 OWL 依赖：
 
-```text
-owl/
+```bash
+pip install "owl @ git+https://github.com/camel-ai/owl.git@98d150d29b4a1f0d362695df936dc3da2ced875a"
 ```
 
-The local `owl/` directory is a third-party OWL repository checkout used by the
-adapter. It is intentionally not part of the clean code commit. If this folder
-is absent on a new machine, clone/copy the OWL repository to `owl/`, or set
-`OWL_REPO_PATH` to the OWL repository path.
+The project now targets the upstream `camel-ai/owl` package installation model
+instead of requiring a sibling local `owl/` checkout. The pinned commit above
+currently reports OWL package version `0.0.1` in the upstream `pyproject.toml`.
+Because the upstream repository does not currently publish GitHub release tags,
+we pin the git commit for reproducibility.
 
-本地 `owl/` 目录是第三方 OWL 仓库副本，adapter 运行时会使用它。它不放进干净代码提交。如果新机器上没有该目录，请把 OWL 仓库 clone/copy 到 `owl/`，或设置 `OWL_REPO_PATH` 指向 OWL 仓库路径。
+当前项目已改为依赖上游 `camel-ai/owl` 的包安装方式，不再要求旁边必须有一个本地 `owl/` 源码目录。上面固定的 commit 在上游 `pyproject.toml` 中声明的包版本号是 `0.0.1`。由于上游仓库暂时没有 GitHub release/tag，这里用 git commit 固定版本，便于复现。
 
 API keys are read from OWL env files:
 
 API key 从 OWL env 文件读取：
 
 ```text
-owl\owl\.env.gaia
-owl\owl\.env.key2
-owl\owl\.env.key3
-owl\owl\.env.key4
-owl\owl\.env.key5
+MAS_FA_ENV_FILE=/path/to/owl.env
+# or
+OWL_ENV_FILE=/path/to/owl.env
 ```
 
 Each file should define:
@@ -221,7 +220,7 @@ flip and validates the attribution artifact.
 | File | Purpose |
 |---|---|
 | `adapter/OWL/core.py` | OWL backend adapter, workforce construction, artifact validation, timeouts. |
-| `main.py` | CLI, round orchestration, `--per_task_rounds`, `--sample_offset`, `--env_file`. |
+| `main.py` | CLI, round orchestration, `--sample_offset`, `--env_file`, dataset alias resolution. |
 | `pipeline/coding/run.py` | Coding task execution plus OWL GAIA-style web task execution. |
 | `pipeline/coding/eval.py` | Coding sandbox eval, GAIA/HotpotQA scoring, BrowseComp/AssistantBench LLM judge. |
 | `pipeline/coding/attack.py` | Attack attribution artifact generation and validation. |

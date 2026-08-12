@@ -127,10 +127,9 @@ class MagenticOneAdapter(BaseAdapter):
         workspace: Path,
         recovery: Path | None = None,
         monitor: BaseMonitor | None = None,
-        enable_lint: bool = True,
+        task_id: str | None = None,
         task: Optional[Dict[str, Any]] = None,
     ) -> None:
-        del enable_lint  # MagenticOne path does not use MetaGPT-style lint toggle.
         workspace = Path(workspace).resolve()
         workspace.mkdir(parents=True, exist_ok=True)
         self._task_result_prediction = ""

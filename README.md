@@ -49,7 +49,7 @@ New MAS backends should mirror `adapter/MetaGPT/core.py` and register under `ada
 
 - **Python** ≥ 3.10 (see `pyproject.toml`).
 - **Core Python deps** (installed with the project): `datasets`, `pydantic`, `tqdm`.
-- **Backend-specific deps**: optional extra **`[metagpt]`** (see `pyproject.toml`). Add new extras when you add adapters.
+- **Backend-specific deps**: optional extras such as **`[metagpt]`** and **`[owl]`** (see `pyproject.toml`). Add new extras when you add adapters.
 - **`sandbox_fusion`**: used by `main.py` and `pipeline/coding/eval.py` for code execution. It is **not** part of the default `dependencies` in `pyproject.toml`—install it from your own wheel, index, or VCS.
 - **Sandbox / judge service**: evaluation expects a running sandbox; `main.py` sets:
   - `set_sandbox_endpoint("http://localhost:8080/")`
@@ -71,11 +71,20 @@ pip install -e ".[metagpt]"
 # Or install MetaGPT fork directly
 pip install "metagpt @ git+https://github.com/yuyueryuyu/MetaGPT.git"
 
+# With OWL backend
+# Pinned to camel-ai/owl commit 98d150d..., whose upstream package version is 0.0.1.
+pip install -e ".[owl]"
+
 # Development (lint, tests, types)
 pip install -e ".[all-with-dev]"
 ```
 
-Then install **`sandbox_fusion`** and your MAS (e.g. MetaGPT) per your environment.
+Then install **`sandbox_fusion`** and configure your MAS runtime per your environment.
+
+For OWL, the runtime now assumes the package is importable from the active Python
+environment; it no longer requires a sibling local `owl/` source checkout.
+Provide model/API settings either directly through environment variables or via
+`MAS_FA_ENV_FILE` / `OWL_ENV_FILE`.
 
 **Optional log level**  
 If `config.ini` is missing, `utils/config.py` will create a default with `log_level` (INFO). Adjust as needed.

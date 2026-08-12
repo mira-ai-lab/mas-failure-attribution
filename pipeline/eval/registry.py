@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from pipeline.eval.scorers import llm_judge, rule_based, sandbox, semantic
+from pipeline.eval.scorers import llm_judge, math_boxed, rule_based, sandbox, semantic
 from pipeline.eval.types import EvalOutcome
 
 
@@ -28,11 +28,13 @@ DATA_SOURCE_STRATEGIES = {
     "hotpotqa": "rule_based",
     "browsecomp": "llm_judge",
     "assistantbench": "llm_judge",
+    "math": "math_boxed",
 }
 REGISTRY = {
     "sandbox": EvaluatorSpec(strategy="sandbox", evaluate_task=sandbox.evaluate_task),
     "rule_based": EvaluatorSpec(strategy="rule_based", evaluate_task=rule_based.evaluate_task),
     "llm_judge": EvaluatorSpec(strategy="llm_judge", evaluate_task=llm_judge.evaluate_task),
+    "math_boxed": EvaluatorSpec(strategy="math_boxed", evaluate_task=math_boxed.evaluate_task),
     "universal": EvaluatorSpec(strategy="universal", evaluate_task=semantic.evaluate_task),
 }
 

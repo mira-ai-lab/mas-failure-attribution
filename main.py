@@ -38,12 +38,13 @@ from monitor.base_monitor import BaseMonitor
 from pipeline.coding.attack import attack_analysis, get_attack_analysis
 from pipeline.coding.diagnose import diagnose_analysis, get_diagnose_analysis
 from pipeline.runners.code_generation import run_code_generation_task
+from pipeline.runners.text_answer import run_text_answer_task
 from pipeline.runners.web_research import run_web_research_task
 from adapter.runtime_bootstrap import bootstrap_backend_runtime
 
 # Project-local imports: utilities.
 from utils.common import match_info, read_json_file, save_final_result, write_json_file
-from utils.logging import handler
+from utils.expert_group_report import validate_flip_attribution_alignment
 from utils.logging import logger
 
 from utils.prompts import REPLAY_PROMPT
@@ -97,10 +98,15 @@ def _load_backend(name: str) -> Type[BaseAdapter]:
 
 
 WEB_TASK_SOURCES = {"gaia", "browsecomp", "assistantbench", "hotpotqa"}
+TEXT_TASK_SOURCES = {"math"}
 
 
 def _task_runner(data_source: str):
-    return run_web_research_task if data_source in WEB_TASK_SOURCES else run_code_generation_task
+    if data_source in WEB_TASK_SOURCES:
+        return run_web_research_task
+    if data_source in TEXT_TASK_SOURCES:
+        return run_text_answer_task
+    return run_code_generation_task
 
 
 async def _execute_task_and_capture_trace(
@@ -407,14 +413,43 @@ async def main(args):
                     last_round_output = output_root / data_source / f"round_{current}" / task_id
                     if not last_round_output.exists():
                         raise FileNotFoundError(f'last round output not exists for {task_id}')
-                    last_round_log = read_json_file(last_round_output / 'log.json') 
-                   
+                    flip_log = read_json_file(last_round_output / 'log.json')
+                    pre_round_output = (
+                        output_root / data_source / f"round_{current - 1}" / task_id
+                    )
+                    if not pre_round_output.exists():
+                        raise FileNotFoundError(
+                            f'pre-round output not exists for {task_id}'
+                        )
+                    pre_round_log = read_json_file(pre_round_output / 'log.json')
+
                     try:
                         final_info = get_attack_analysis(output)
-                        analysis_source_log = last_round_log
                     except Exception as e:
                         logger.error(f"Error occurred while analyzing attack results for {task_id}: {e}")
                         continue
+
+                    try:
+                        validate_flip_attribution_alignment(
+                            pre_round_log, flip_log, final_info
+                        )
+                    except ValueError as e:
+                        logger.warning(
+                            f'Flip alignment rejected for {task_id} (attack): {e}'
+                        )
+                        continue
+
+                    completed_tasks.append(task_id)
+                    try:
+                        save_final_result(
+                            output_root / 'final_results',
+                            flip_log,
+                            final_info,
+                            agent_source_log=pre_round_log,
+                        )
+                    except ValueError as e:
+                        logger.error(f'Final attribution rejected for {task_id}: {e}')
+                    continue
     
                 else: # from fail to success
                     if not run_diagnose:
@@ -425,27 +460,39 @@ async def main(args):
                     last_round_output = output_root / data_source / f"round_{current-1}" / task_id
                     if not last_round_output.exists():
                         raise FileNotFoundError(f'last round output not exists for {task_id}')
-                    last_round_log = read_json_file(last_round_output / 'log.json') 
+                    pre_round_log = read_json_file(last_round_output / 'log.json')
+                    flip_log = read_json_file(output / 'log.json')
                     try:
                         final_info = get_diagnose_analysis(output)
-                        analysis_source_log = last_round_log
                     except Exception as e:
                         logger.error(f"Error occurred while analyzing diagnose results for {task_id}: {e}")
                         continue
 
-                completed_tasks.append(task_id)
-                try:
-                    save_final_result(output_root / 'final_results', analysis_source_log, final_info)
-                except ValueError as e:
-                    logger.error(f'Final attribution rejected for {task_id}: {e}')
+                    try:
+                        validate_flip_attribution_alignment(
+                            pre_round_log, flip_log, final_info,
+                            reject_framework_agents=False,
+                        )
+                    except ValueError as e:
+                        logger.warning(
+                            f'Flip alignment rejected for {task_id} (diagnose): {e}'
+                        )
+                        continue
+
+                    completed_tasks.append(task_id)
+                    try:
+                        save_final_result(
+                            output_root / 'final_results',
+                            pre_round_log,
+                            final_info,
+                            agent_source_log=pre_round_log,
+                        )
+                    except ValueError as e:
+                        logger.error(f'Final attribution rejected for {task_id}: {e}')
             else:
                 logger.info(f'Eval Result remains the same, Attack/Diagnose Fail...')
 
 if __name__ == "__main__":
-    try:
-        handler.doRollover()
-    except OSError as e:
-        logger.warning(f"Skipping log rollover because the log file is busy: {e}")
     # set_sandbox_endpoint("http://localhost:8080/")
     # set_dataset_endpoint("http://localhost:8080/online_judge/")
     parser = argparse.ArgumentParser(description="Universal attack and diagnosis framework")
